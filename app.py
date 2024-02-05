@@ -307,6 +307,6 @@ def index():
 if __name__ == '__main__':
     
     load_dotenv() # get client app variables to connect to the keyvault
-    global_variables()  # grab keyvault values for secrets and API keys
+    #global_variables()  # grab keyvault values for secrets and API keys
     app.run(debug=True) # run flask app
     
