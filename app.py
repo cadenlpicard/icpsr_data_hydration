@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 import os
 from sqlalchemy import create_engine, text
 
+######################################################
+################# GLOBAL VARIABLES####################
+######################################################
 app = Flask(__name__)
 result_size = 10
 
@@ -24,51 +27,22 @@ check_icpsr = False
 check_elsst = False
 check_mesh = False
 
-######################################################
-################# GLOBAL VARIABLES####################
-######################################################
+### Secrets 
+key_vault_uri = os.getenv('KEY_VAULT_URI')
+credential = DefaultAzureCredential()
+secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
-def global_variables():
+gpt_key = secret_client.get_secret("gpt4-api-key")
+chat_model = "gpt-4-1106-preview"
 
-    global client_id
-    global tenant_id
-    global client_secret
-    global gpt_key
-    global chat_model
-    global server_name 
-    global database_name
-    global username 
-    global password
-    global connection_url
-    global engine
-    
-    client_id = os.getenv('AZURE_CLIENT_ID')
-    tenant_id = os.getenv('AZURE_TENANT_ID')
-    client_secret = os.getenv('AZURE_CLIENT_SECRET')
-    
-    gpt_key = get_secret("gpt4-api-key")
-    chat_model = "gpt-4-1106-preview" 
-    
-    # Retrieve secrets
-    server_name = get_secret("azuresql-db-icpsrserver")
-    database_name = get_secret("icpsr-database")
-    username = get_secret("sql-adminusername")
-    password = get_secret("sql-adminpassword")
-    
-    # Construct the connection URL
-    connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
-    engine = create_engine(connection_url)
-
-######################################################
-################# Get Secrets from Azure #############
-######################################################
-
-def get_secret(secret_name):
-    key_vault_uri = "https://um-research-keyvault-dev.vault.azure.net/"
-    credential = DefaultAzureCredential()
-    secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
-    retrieved_secret = secret_client.get_secret(secret_name)
-    return retrieved_secret.value
+server_name = secret_client.get_secret("azuresql-db-icpsrserver")
+database_name = secret_client.get_secret("icpsr-database")
+username = secret_client.get_secret("sql-adminusername")
+password = secret_client.get_secret("sql-adminpassword")
+        
+# Construct the connection URL
+connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
+engine = create_engine(connection_url)
 
 ######################################################
 ################# CHATGPT ###########################
