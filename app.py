@@ -5,25 +5,10 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from dotenv import load_dotenv
 import os
-
-
-######################################################
-################# GLOBAL VARIABLES####################
-######################################################
-
-
+from sqlalchemy import create_engine, text
 
 app = Flask(__name__)
-
-
 result_size = 10
-
-
-icpsr_file = 'data\search_terms.csv'
-loc_file = 'data\LOC_terms.csv'
-elsst_file = 'data\ELSST_Terms.csv'
-mesh_file = 'data\MESH_Terms.csv'
-
 
 # get results #  
 icpsr_result = ''
@@ -39,6 +24,40 @@ check_icpsr = False
 check_elsst = False
 check_mesh = False
 
+######################################################
+################# GLOBAL VARIABLES####################
+######################################################
+
+def global_variables():
+
+    global client_id
+    global tenant_id
+    global client_secret
+    global gpt_key
+    global chat_model
+    global server_name 
+    global database_name
+    global username 
+    global password
+    global connection_url
+    global engine
+    
+    client_id = os.getenv('AZURE_CLIENT_ID')
+    tenant_id = os.getenv('AZURE_TENANT_ID')
+    client_secret = os.getenv('AZURE_CLIENT_SECRET')
+    
+    gpt_key = get_secret("gpt4-api-key")
+    chat_model = "gpt-4-1106-preview" 
+    
+    # Retrieve secrets
+    server_name = get_secret("azuresql-db-icpsrserver")
+    database_name = get_secret("icpsr-database")
+    username = get_secret("sql-adminusername")
+    password = get_secret("sql-adminpassword")
+    
+    # Construct the connection URL
+    connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
+    engine = create_engine(connection_url)
 
 ######################################################
 ################# Get Secrets from Azure #############
@@ -48,10 +67,8 @@ def get_secret(secret_name):
     key_vault_uri = "https://um-research-keyvault-dev.vault.azure.net/"
     credential = DefaultAzureCredential()
     secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
-
     retrieved_secret = secret_client.get_secret(secret_name)
     return retrieved_secret.value
-
 
 ######################################################
 ################# CHATGPT ###########################
@@ -77,12 +94,17 @@ def chatgpt(gpt_key, chat_model, prompt):
 ######################################################
 ################# KEYWORD LISTS ######################
 ######################################################
+def return_keyword_list(db_id, header_name='keyword'):
+    sql_query = text("SELECT keyword FROM icpsr_meta.dbo.keywords WHERE source_db_id = :db_id")
 
-def return_keyword_list(file_name, header_name ='keywords'):
-  df = pd.read_csv(file_name)
-  keywords = df[header_name].tolist()
-  lower_keywords = [word.lower() for word in keywords]
-  return lower_keywords
+    with engine.connect() as connection:
+        result = connection.execute(sql_query, {"db_id": db_id})
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    keywords = df[header_name].tolist()
+    lower_keywords = [word.lower() for word in keywords]
+    
+    return lower_keywords
+
 
 ######################################################
 ################# Look at dictionaries################
@@ -169,21 +191,21 @@ def main(param, check_icpsr, check_elsst, check_mesh):
         
     
     # get results #  
-    icpsr_keywords = return_keyword_list(icpsr_file)
+    icpsr_keywords = return_keyword_list('3')
     gpt_missing = missing_keywords(gpt_list,icpsr_keywords)
     
     if check_icpsr == True:
-        icpsr_result = get_dictionary_terms(icpsr_file, gpt_list, result_size)
+        icpsr_result = get_dictionary_terms('2', gpt_list, result_size)
     else:
         icpsr_result = 'Not analyzed'
     if check_elsst == True:
-        elsst_result = get_dictionary_terms(elsst_file, gpt_list, result_size)
+        elsst_result = get_dictionary_terms('3', gpt_list, result_size)
         elsst_missing = missing_keywords(elsst_result,icpsr_keywords)
     else:
         elsst_result = 'Not analyzed'
         elsst_missing = 'Not analyzed'
     if check_mesh == True:
-        mesh_result = get_dictionary_terms(mesh_file, gpt_list, result_size)
+        mesh_result = get_dictionary_terms('1', gpt_list, result_size)
         mesh_missing = missing_keywords(mesh_result,icpsr_keywords)
     else:
         mesh_result = 'Not analyzed'
@@ -306,13 +328,11 @@ def index():
 
     ''', results=results)
 
+
+
 if __name__ == '__main__':
+    
     load_dotenv()
-    client_id = os.getenv('AZURE_CLIENT_ID')
-    tenant_id = os.getenv('AZURE_TENANT_ID')
-    client_secret = os.getenv('AZURE_CLIENT_SECRET')
-    
-    gpt_key = get_secret("gpt4-api-key")
-    chat_model = "gpt-4-1106-preview" 
-    
+    global_variables()    
     app.run(debug=True)
+    
