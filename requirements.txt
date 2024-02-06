@@ -1,0 +1,7 @@
+openai
+pandas
+Flask
+azure-identity
+azure-keyvault-secrets
+python-dotenv
+SQLAlchemy
