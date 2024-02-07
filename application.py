@@ -26,8 +26,6 @@ key_vault_uri = os.getenv("KEY_VAULT_URI")
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
-print(key_vault_uri)
-
 # Retrieve secrets
 gpt_key = secret_client.get_secret("gpt4-api-key").value
 chat_model = "gpt-4-1106-preview"
@@ -38,7 +36,6 @@ password = secret_client.get_secret("sql-adminpassword").value
 
 # Construct the connection URL and create engine
 connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
-print(connection_url)
 engine = create_engine(connection_url, connect_args={"timeout": 30})
 
 # Define function to interact with ChatGPT
