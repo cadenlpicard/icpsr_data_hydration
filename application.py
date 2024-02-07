@@ -26,6 +26,8 @@ key_vault_uri = os.getenv("KEY_VAULT_URI")
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
+print(key_vault_uri)
+
 # Retrieve secrets
 gpt_key = secret_client.get_secret("gpt4-api-key").value
 chat_model = "gpt-4-1106-preview"
