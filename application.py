@@ -7,91 +7,70 @@ from dotenv import load_dotenv
 import os
 from sqlalchemy import create_engine, text
 
-######################################################
-################# GLOBAL VARIABLES####################
-######################################################
+# Initialize Flask app
 app = Flask(__name__)
+
+# Set result size
 result_size = 10
 
-# get results #  
-icpsr_result = ''
-elsst_result = ''
-mesh_result = ''
+# Initialize results and missing variables
+icpsr_result, elsst_result, mesh_result = "", "", ""
+elsst_missing, gpt_missing, mesh_missing = "", "", ""
 
-#find missing #
-elsst_missing = ''
-gpt_missing = ''
-mesh_missing = ''
+# Initialize check flags
+check_icpsr, check_elsst, check_mesh = False, False, False
 
-check_icpsr = False
-check_elsst = False
-check_mesh = False
-
-### Secrets 
-key_vault_uri = os.getenv('KEY_VAULT_URI')
+# Load environment variables and set up credentials
+load_dotenv()
+key_vault_uri = os.getenv("KEY_VAULT_URI")
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
-gpt_key = secret_client.get_secret("gpt4-api-key")
+# Retrieve secrets
+gpt_key = secret_client.get_secret("gpt4-api-key").value
 chat_model = "gpt-4-1106-preview"
+server_name = secret_client.get_secret("azuresql-db-icpsrserver").value
+database_name = secret_client.get_secret("icpsr-database").value
+username = secret_client.get_secret("sql-adminusername").value
+password = secret_client.get_secret("sql-adminpassword").value
 
-server_name = secret_client.get_secret("azuresql-db-icpsrserver")
-database_name = secret_client.get_secret("icpsr-database")
-username = secret_client.get_secret("sql-adminusername")
-password = secret_client.get_secret("sql-adminpassword")
-        
-# Construct the connection URL
+# Construct the connection URL and create engine
 connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
-engine = create_engine(connection_url)
+print(connection_url)
+engine = create_engine(connection_url, connect_args={"timeout": 30})
 
-######################################################
-################# CHATGPT ###########################
-######################################################
-
+# Define function to interact with ChatGPT
 def chatgpt(gpt_key, chat_model, prompt):
-  
+    openai.api_key = gpt_key
+    response = openai.chat.completions.create(
+        model=chat_model, messages=[{"role": "user", "content": prompt}], seed=1, temperature = .5
+    )
+    responses = response.choices[0].message.content.strip()
+    gpt_list = list(responses.split(","))
+    return gpt_list
 
-  openai.api_key = gpt_key  
-  response = openai.chat.completions.create(
-  model=chat_model,  
-  messages=[{
-              "role": "user"
-             , "content": prompt 
-            }
-            ],
-  seed = 1
-  )
-  responses = response.choices[0].message.content.strip()
-  gpt_list = list(responses.split(","))
-  return(gpt_list)
 
-######################################################
-################# KEYWORD LISTS ######################
-######################################################
-def return_keyword_list(db_id, header_name='keyword'):
-    sql_query = text("SELECT keyword FROM icpsr_meta.dbo.keywords WHERE source_db_id = :db_id")
-
+# Define function to retrieve keyword list
+def return_keyword_list(db_id, header_name="keyword"):
+    sql_query = text(
+        "SELECT keyword FROM icpsr_meta.dbo.keywords WHERE source_db_id = :db_id"
+    )
     with engine.connect() as connection:
         result = connection.execute(sql_query, {"db_id": db_id})
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    keywords = df[header_name].tolist()
-    lower_keywords = [word.lower() for word in keywords]
-    
-    return lower_keywords
+    return [word.lower() for word in df[header_name].tolist()]
 
 
 ######################################################
 ################# Look at dictionaries################
 ######################################################
 
-def get_dictionary_terms(file_name, gpt_list, result_size):
-    
-  file_keywords = return_keyword_list(file_name)
-  limited_list = file_keywords[:20000]
-  lowerfile_words = [word.lower() for word in limited_list]
-  file_list = ','.join(lowerfile_words)
-  
-  list_compare_prompt = f'''I am going to give you two lists. The first list is called "GPT list" and the second list is called "Subject Terms List".
+
+def get_dictionary_terms(file_name, gpt_list, size):
+    file_keywords = return_keyword_list(file_name)[:20000]
+    file_list = ", ".join([word.lower() for word in file_keywords])
+
+    list_compare_prompt = f"""I am going to give you two lists. The first list is called "GPT list" and the second list is called "Subject Terms List".
                         Based on the words in the "GPT list", find phrases in the "Subject Terms List" that describe similar contexts and themes. 
                         The result set should be comma delimited list without numbering.
                         This is the GPT list:{gpt_list}
@@ -99,123 +78,104 @@ def get_dictionary_terms(file_name, gpt_list, result_size):
                         Order the list alphabetically from A-Z.
                         Limit the results to {result_size} of the most relevant phrases sourced from the "Subject Terms List"
                         Do not provide any additional commentary or feedback.
-                        '''
-                        
-  
-  #print(list_compare_prompt)
-  
-  gpt_compare = chatgpt(gpt_key, chat_model,list_compare_prompt)
-  gpt_compare_str = '\n'.join(gpt_compare) 
-  
-  return_results = gpt_compare_str
-  return(return_results)
-  
-  
-def missing_keywords(keyword_list,icpsr_keywords):
-  
-  missing_keywords= [item for item in keyword_list.split("\n") if item in icpsr_keywords]
-  missing_keywords = "\n".join(missing_keywords)
-  return(missing_keywords)
-  
+                        """
+    return chatgpt(gpt_key, chat_model, list_compare_prompt)
+
+
+# Define function to find missing keywords
+def missing_keywords(keyword_list, icpsr_keywords):
+    return ", ".join([item for item in keyword_list if item in icpsr_keywords])
+
+
 def get_gpt_list(text_to_analyze):
-  
-  passage_prompt = f'''
+
+    passage_prompt = f"""
               Here is a passage of text: {text_to_analyze}.Analyze the passage to understand the main context and themes. Return them
               in a comma delimited list. The themes and context descriptions should be no more than 3 words long and should not have special characters.
               Do not provide any additional commentary or feedback.
-              '''
-  
-  gpt_words = chatgpt(gpt_key, chat_model,passage_prompt)   
-  lower_gpt_words = [word.lower() for word in gpt_words]
-  gpt_list = '\n'.join(lower_gpt_words) 
-  return(gpt_list)
+              """
+    gpt_words = chatgpt(gpt_key, chat_model, passage_prompt)
+    return [word.lower() for word in gpt_words]
 
 
-##################################################
-################# Format Output ##################
-##################################################
+# Define function to format data as HTML table
+
 
 def format_data_as_html_table(data, headers):
-    # Start the table and add the header row
-    table_html = '<table border="1" style="border-collapse: collapse;">'  # Added 'border-collapse' for better styling
+    table_html = '<table border="1" style="border-collapse: collapse;">'
     table_html += '<tr>'
     for header in headers:
-        table_html += f'<th style="padding: 8px; text-align: left;">{header}</th>'  # Added some padding and text alignment for styling
+        table_html += f'<th style="padding: 8px; text-align: left;">{header}</th>'
     table_html += '</tr>'
 
-    # Add data rows, joining lists with '<br>' for line breaks
     for row in data:
         table_html += '<tr>'
         for cell in row:
-            if isinstance(cell, list):  # Check if the cell is a list
-                cell = '</br>'.join(cell)  # Join list items with line breaks
-            table_html += f'<td style="padding: 8px;">{cell}</td>'  # Added padding for styling
+            if isinstance(cell, list):
+                # Convert list items into an unordered list
+                bullet_points = ''.join(f'<li>{item}</li>' for item in cell)
+                cell = f'<ul>{bullet_points}</ul>'
+            table_html += f'<td style="padding: 8px;text-align: left;">{cell}</td>'
         table_html += '</tr>'
 
     table_html += '</table>'
     return table_html
 
-   
-##################################################
-################# MAIN ###########################
-##################################################
-def main(param, check_icpsr, check_elsst, check_mesh):
-    
-    gpt_list = get_gpt_list(param)
-        
-    
-    # get results #  
-    icpsr_keywords = return_keyword_list('3')
-    gpt_missing = missing_keywords(gpt_list,icpsr_keywords)
-    
-    if check_icpsr == True:
-        icpsr_result = get_dictionary_terms('2', gpt_list, result_size)
-    else:
-        icpsr_result = 'Not analyzed'
-    if check_elsst == True:
-        elsst_result = get_dictionary_terms('3', gpt_list, result_size)
-        elsst_missing = missing_keywords(elsst_result,icpsr_keywords)
-    else:
-        elsst_result = 'Not analyzed'
-        elsst_missing = 'Not analyzed'
-    if check_mesh == True:
-        mesh_result = get_dictionary_terms('1', gpt_list, result_size)
-        mesh_missing = missing_keywords(mesh_result,icpsr_keywords)
-    else:
-        mesh_result = 'Not analyzed'
-        mesh_missing = 'Not analyzed'
 
-    
+
+# Define main function to process form and generate results
+def main(param, check_icpsr, check_elsst, check_mesh):
+    gpt_list = get_gpt_list(param)
+    icpsr_keywords = return_keyword_list("3")
+    gpt_missing = missing_keywords(gpt_list, icpsr_keywords)
+
+    if check_icpsr == True:
+        icpsr_result = get_dictionary_terms("2", gpt_list, result_size)
+    else:
+        icpsr_result = "Not analyzed"
+    if check_elsst == True:
+        elsst_result = get_dictionary_terms("3", gpt_list, result_size)
+        elsst_missing = missing_keywords(elsst_result, icpsr_keywords)
+    else:
+        elsst_result = "Not analyzed"
+        elsst_missing = "Not analyzed"
+    if check_mesh == True:
+        mesh_result = get_dictionary_terms("1", gpt_list, result_size)
+        mesh_missing = missing_keywords(mesh_result, icpsr_keywords)
+    else:
+        mesh_result = "Not analyzed"
+        mesh_missing = "Not analyzed"
+
     data = [
-            ["ChatGPT", gpt_list, gpt_missing]
-          , ["ICPSR", icpsr_result, ""]
-          , ["ELSST", elsst_result, elsst_missing]
-          , ["MESH", mesh_result, mesh_missing]
-          ]
-    
-    
+        ["ChatGPT", gpt_list, gpt_missing],
+        ["ICPSR", icpsr_result, ""],
+        ["ELSST", elsst_result, elsst_missing],
+        ["MESH", mesh_result, mesh_missing],
+    ]
+
     headers = ["Source", "Suggested", "Keywords in ICPSR"]
     result = format_data_as_html_table(data, headers)
     return result
 
-       
+
 ##################################################
 ################# FLASK ROUTES####################
 ##################################################
 
 # Route to display the form
-@app.route('/', methods=['GET', 'POST'])
+@app.route("/", methods=["GET", "POST"])
 def index():
     results = ""
-    if request.method == 'POST':
-        param = request.form.get('param', '') 
-        check_mesh = 'mesh' in request.form
-        check_icpsr = 'icpsr' in request.form
-        check_elsst = 'elsst' in request.form
-    
-        results = main(param,check_icpsr,check_elsst, check_mesh)
-         
-    return render_template_string('''
+    if request.method == "POST":
+        param = request.form.get("param", "")
+        check_mesh = "mesh" in request.form
+        check_icpsr = "icpsr" in request.form
+        check_elsst = "elsst" in request.form
+
+        results = main(param, check_icpsr, check_elsst, check_mesh)
+
+    return render_template_string(
+        """
     <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -300,13 +260,12 @@ def index():
 </body>
 </html>
 
-    ''', results=results)
+    """,
+        results=results,
+    )
 
 
+if __name__ == "__main__":
 
-if __name__ == '__main__':
-    
-    load_dotenv() # get client app variables to connect to the keyvault
-    #global_variables()  # grab keyvault values for secrets and API keys
-    app.run(debug=True) # run flask app
-    
+    load_dotenv()  # get client app variables to connect to the keyvault
+    app.run(debug=True)  # run flask app
