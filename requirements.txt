@@ -6,5 +6,4 @@ azure-keyvault-secrets
 python-dotenv
 SQLAlchemy
 pyodbc
-io
 csv
