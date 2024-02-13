@@ -1,11 +1,15 @@
+import json
 import openai
 import pandas as pd
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, Response
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from dotenv import load_dotenv
 import os
 from sqlalchemy import create_engine, text
+import io
+import csv
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -13,6 +17,7 @@ app = Flask(__name__)
 # Set GLOBAL 
 result_size = 10
 TEMPERATURE = .5
+STUDYID = 0
 
 # Initialize results and missing variables
 icpsr_result, elsst_result, loc_result = "", "", ""
@@ -38,6 +43,9 @@ password = secret_client.get_secret("sql-adminpassword").value
 # Construct the connection URL and create engine
 connection_url = f"mssql+pyodbc://{username}:{password}@{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
 engine = create_engine(connection_url, connect_args={"timeout": 30})
+# Create an in-memory stream to hold the CSV data
+proxy = io.StringIO()
+writer = csv.writer(proxy)
 
 # Define function to interact with ChatGPT
 def chatgpt(gpt_key, chat_model, prompt,TEMPERATURE):
@@ -53,12 +61,27 @@ def chatgpt(gpt_key, chat_model, prompt,TEMPERATURE):
 # Define function to retrieve keyword list
 def return_keyword_list(db_id, header_name="keyword"):
     sql_query = text(
-        "SELECT keyword FROM icpsr_meta.dbo.keywords WHERE source_db_id = :db_id"
+        "exec dbo.return_keywords :db_id"
     )
     with engine.connect() as connection:
         result = connection.execute(sql_query, {"db_id": db_id})
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
     return [word.lower() for word in df[header_name].tolist()]
+
+from sqlalchemy import text
+
+def write_to_log_table(request_text, request_params):
+    sql = text("INSERT INTO dbo.getmeta_requests (request_text, request_parameters) VALUES (:request_text, :request_params)")
+    params = {"request_text": request_text, "request_params": request_params}
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, params)
+            print('Request inserted successfully')
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
+
 
 
 ######################################################
@@ -166,7 +189,26 @@ def main(param, check_icpsr, check_elsst, check_loc):
         ["ELSST", elsst_result, elsst_missing],
         ["LOC", loc_result, loc_missing],
     ]
-
+    request_params = {
+        "studyid":STUDY_ID,
+        "temperature":TEMPERATURE,
+        "keywords": {
+            "ChatGPT": gpt_list,
+            "ICPSR": icpsr_result,
+            "ELSST": elsst_result,  
+            "LOC": loc_result
+        },
+        "matching in ICPSR": {
+            "ChatGPT": gpt_missing,
+            "ELSST": elsst_missing,
+            "LOC": loc_missing
+        }
+    }
+    
+    request_params = json.dumps(request_params)
+    print(request_params)
+    write_to_log_table(param,request_params)
+    
     headers = ["Source", "Suggested", "Keywords in ICPSR"]
     result = format_data_as_html_table(data, headers)
     return result
@@ -197,7 +239,6 @@ def has_related_words(word):
 def query_results():
     word = request.args.get('word')
     sql_query = "exec dbo.return_associated_keywords :word"
-    print(sql_query)
     with engine.connect() as connection:
         result = connection.execute(text(sql_query), {"word": word})
         rows = result.fetchall()
@@ -210,18 +251,38 @@ def query_results():
     table_html += '</table>'
     return table_html
 
+#Route to export csv or previous requests
+@app.route('/export_csv')
+def export_csv():
+    sql = text("select * from dbo.vwgetmeta_requests")
+    try:
+        with engine.begin() as conn:  # Begin a transaction
+            result = conn.execute(sql)
+            writer.writerow(result.keys())
+            writer.writerows(result.fetchall())
+            proxy.seek(0)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return str(e) 
+
+    # Create a Flask response object and set the appropriate headers
+    response = Response(proxy.getvalue(), mimetype='text/csv')
+    response.headers.set("Content-Disposition", "attachment", filename="icpsr_getmeta_requests.csv")
+    return response
+
 # Route to display the form
 @app.route("/", methods=["GET", "POST"])
 def index():
     global TEMPERATURE
+    global STUDY_ID
     results = ""
     if request.method == "POST":
         param = request.form.get("param", "")
         TEMPERATURE = float(request.form.get("temperature", 0.5))
+        STUDY_ID = request.form.get("studyid")
         check_loc = "loc" in request.form
         check_icpsr = "icpsr" in request.form
         check_elsst = "elsst" in request.form
-
         results = main(param, check_icpsr, check_elsst, check_loc)
 
     return render_template_string(
@@ -269,7 +330,23 @@ def index():
         color: #FFCB05; /* U-M Maize */
         overflow-y: auto;
     }
+    .study-input-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 10px 0; 
+    }
 
+    .study-input-label {
+        margin-right: 5px; 
+    }
+
+    .study-input {
+            width: 60px; 
+            text-align: center;
+            margin-bottom:20px;
+            margin-top:20px;
+    }
     textarea, input[type="number"] {
         width: 100%;
         padding: 10px;
@@ -296,7 +373,7 @@ def index():
             height: 350px; /* Larger text area */
         }
 
-        #temperature {
+        #temperature, #studyid {
             width: 60px; /* Smaller input for temperature */
             text-align: center;
             margin-bottom:20px;
@@ -324,8 +401,26 @@ def index():
         text-transform: uppercase;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         transition: all 0.3s ease;
+        margin-bottom:10px;
+    }
+    .download-btn {
+        margin-top: 20px; /* Adds some space above the button */
+        background-color: #FFCB05; /* U-M Maize */
+        color: #00274C; /* U-M Blue */
+        border: 2px solid #00274C; /* U-M Blue border */
+        padding: 5px 10px;
+        border-radius: 5px; /* Slightly rounded corners */
+        font-size: 12px; /* Larger font size */
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.3s, color 0.3s;
     }
 
+    .download-btn:hover {
+        background-color: #E6B905; /* Darker Maize on hover */
+        color: #fff; /* Lighter text on hover */
+    }
+    
     button:hover, button:focus {
         background-color: #E6B905; /* Darker Maize */
         outline: none;
@@ -406,7 +501,7 @@ def index():
     </script>
 </head>
 <body>
-    <div class="banner">For Research Purposes Only</div>
+    <div class="banner">For Testing Purposes Only</div>
     <div class="container">
         <div class="form-container">
             <form action="/" method="POST">
@@ -420,13 +515,16 @@ def index():
                     <input type="checkbox" id="elsst" name="elsst" value="true">
                     <label for="elsst">ELSST</label>
                 </div>
-                <div></div>
                 <div class="temperature-input">
                     <label for="temperature">Temperature:</label>
                     <input type="number" id="temperature" name="temperature" min="0" max="1" step="0.01" value="0.5">
+                    <label for="studyid" style ="width: 80px;height:40px">  Study ID:</label>
+                    <input type="text" id="studyid" name="studyid" class="study-input">
                 </div>
                 <button type="submit">Submit</button>
             </form>
+            <div></div>
+             <a href="/export_csv" class="download-btn">Download Request Logs</a>
         </div>
         <div class="results-container" style="display: {% if results %} block {% else %} none {% endif %};">
             {% if results %}
