@@ -131,28 +131,41 @@ def format_data_as_html_table(data, headers):
         table_html += f'<th style="padding: 8px; text-align: left;">{header}</th>'
     table_html += '</tr>'
 
-    for row_index, row in enumerate(data):
+    for row in data:
         table_html += '<tr>'
-        for cell_index, cell in enumerate(row):
+        for cell in row:
+            table_html += '<td style="padding: 8px;text-align: left;">'
             if isinstance(cell, list):
-                # Start an unordered list for the cell content
                 cell_content = "<ul>"
                 for item in cell:
+                    cell_content += "<li>"
                     if has_related_words(item):
-                        # Make the item clickable only if it's in the ICPSR column and has related words
-                        cell_content += f'<li><a href="javascript:void(0);" onclick="fetchResults(\'{item}\')" style="color: #FFCB05; text-decoration: underline;">{item}</a></li>'
+                        # If the entire phrase has related words, make it a clickable link
+                        cell_content += f'<a href="javascript:void(0);" onclick="fetchResults(\'{item}\')" style="color: #FFCB05; text-decoration: underline;">{item}</a>'
                     else:
-                        # Just display the item as a list element
-                        cell_content += f'<li>{item}</li>'
-                cell_content += "</ul>"  # Close the unordered list
+                        # If the entire phrase does not have related words, check individual words
+                        words = item.split()  # Split the item into individual words
+                        for word in words:
+                            if has_related_words(word):
+                                # If the word has related words, make it a clickable link
+                                cell_content += f'<a href="javascript:void(0);" onclick="fetchResults(\'{word}\')" style="color: #FFCB05; text-decoration: underline;">{word}</a> '
+                            else:
+                                # If not, just add the word as is
+                                cell_content += word + ' '
+                        cell_content = cell_content.strip()  # Remove trailing space
+                    cell_content += "</li>"  # Close list item
+                cell_content += "</ul>"
+                table_html += cell_content
             else:
-                # Display non-list cell content directly
-                cell_content = cell
-            table_html += f'<td style="padding: 8px;text-align: left;">{cell_content}</td>'
+                # For non-list cells, just add the cell content
+                table_html += cell
+            table_html += '</td>'
         table_html += '</tr>'
 
     table_html += '</table>'
     return table_html
+
+
 
 
 
