@@ -54,7 +54,7 @@ def chatgpt(gpt_key, chat_model, prompt,TEMPERATURE):
         model=chat_model, messages=[{"role": "user", "content": prompt}], seed=1, temperature = TEMPERATURE
     )
     responses = response.choices[0].message.content.strip()
-    gpt_list = list(responses.split(","))
+    gpt_list = [item.strip() for item in responses.split(",")]
     return gpt_list
 
 
@@ -91,7 +91,7 @@ def write_to_log_table(request_text, request_params):
 
 def get_dictionary_terms(file_name, gpt_list, size):
     file_keywords = return_keyword_list(file_name)[:20000]
-    file_list = ", ".join([word.lower() for word in file_keywords])
+    file_list = ",".join(word.lower().strip() for word in file_keywords)
 
     list_compare_prompt = f"""I am going to give you two lists. The first list is called "GPT list" and the second list is called "Subject Terms List".
                         Based on the words in the "GPT list", find phrases in the "Subject Terms List" that describe similar contexts and themes. 
@@ -107,7 +107,12 @@ def get_dictionary_terms(file_name, gpt_list, size):
 
 # Define function to find missing keywords
 def missing_keywords(keyword_list, icpsr_keywords):
-    return ", ".join([item for item in keyword_list if item in icpsr_keywords])
+    matches = []  
+    for item in keyword_list:
+        if item.strip() not in icpsr_keywords:
+            matches.append(item.strip())  
+    return ",".join(matches)  
+
 
 
 def get_gpt_list(text_to_analyze):
@@ -138,27 +143,23 @@ def format_data_as_html_table(data, headers):
             if isinstance(cell, list):
                 cell_content = "<ul>"
                 for item in cell:
-                    cell_content += "<li>"
-                    if has_related_words(item):
-                        # If the entire phrase has related words, make it a clickable link
-                        cell_content += f'<a href="javascript:void(0);" onclick="fetchResults(\'{item}\')" style="color: #FFCB05; text-decoration: underline;">{item}</a>'
+                    formatted_item = ' '.join(word.strip() for word in item.split())
+                    if has_related_words(formatted_item):
+                        cell_content += f'<li><a href="javascript:void(0);" onclick="fetchResults(\'{formatted_item}\')" style="color: #FFCB05; text-decoration: underline;">{formatted_item}</a></li>'
                     else:
-                        # If the entire phrase does not have related words, check individual words
-                        words = item.split()  # Split the item into individual words
-                        for word in words:
-                            if has_related_words(word):
-                                # If the word has related words, make it a clickable link
-                                cell_content += f'<a href="javascript:void(0);" onclick="fetchResults(\'{word}\')" style="color: #FFCB05; text-decoration: underline;">{word}</a> '
-                            else:
-                                # If not, just add the word as is
-                                cell_content += word + ' '
-                        cell_content = cell_content.strip()  # Remove trailing space
-                    cell_content += "</li>"  # Close list item
+                        # Add the phrase as a normal list item
+                        cell_content += f'<li>{formatted_item}</li>'
+                cell_content += "</ul>"
+                table_html += cell_content
+            elif isinstance(cell, str):
+                cell_content = "<ul>"
+                phrases = [phrase.strip() for phrase in cell.split(',')]
+                for phrase in phrases:
+                    cell_content += f"<li>{phrase}</li>"
                 cell_content += "</ul>"
                 table_html += cell_content
             else:
-                # For non-list cells, just add the cell content
-                table_html += cell
+                table_html += str(cell)
             table_html += '</td>'
         table_html += '</tr>'
 
@@ -173,10 +174,11 @@ def format_data_as_html_table(data, headers):
 
 
 
+
 # Define main function to process form and generate results
 def main(param, check_icpsr, check_elsst, check_loc):
     gpt_list = get_gpt_list(param)
-    icpsr_keywords = return_keyword_list("3")
+    icpsr_keywords = return_keyword_list("2")
     gpt_missing = missing_keywords(gpt_list, icpsr_keywords)
 
     if check_icpsr == True:
@@ -222,7 +224,7 @@ def main(param, check_icpsr, check_elsst, check_loc):
     print(request_params)
     write_to_log_table(param,request_params)
     
-    headers = ["Source", "Suggested", "Keywords in ICPSR"]
+    headers = ["Source", "Suggested", "Keywords not in ICPSR"]
     result = format_data_as_html_table(data, headers)
     return result
 
