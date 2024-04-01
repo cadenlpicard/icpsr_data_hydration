@@ -1,5 +1,5 @@
 import json
-import openai
+from openai import AzureOpenAI
 import pandas as pd
 from flask import Flask, request, render_template_string, Response
 from azure.identity import DefaultAzureCredential
@@ -32,9 +32,8 @@ key_vault_uri = os.getenv("KEY_VAULT_URI")
 credential = DefaultAzureCredential()
 secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
-# Retrieve secrets
-gpt_key = secret_client.get_secret("gpt4-api-key").value
-chat_model = "gpt-4-1106-preview"
+
+# Azure SQL - Retrieve secrets
 server_name = secret_client.get_secret("azuresql-db-icpsrserver").value
 database_name = secret_client.get_secret("icpsr-database").value
 username = secret_client.get_secret("sql-adminusername").value
@@ -47,12 +46,29 @@ engine = create_engine(connection_url, connect_args={"timeout": 30})
 proxy = io.StringIO()
 writer = csv.writer(proxy)
 
+
+# GPT - Retrieve secrets
+gpt_key = secret_client.get_secret("gpt4-api-key").value
+shortcode = secret_client.get_secret("shortcode").value
+base_url = secret_client.get_secret("openai-api-base").value
+chat_model = "2023-05-15" 
+deploy_id = 'gpt-4-turbo' 
+
+#Create OpenAI client
+client = AzureOpenAI(
+    api_key=gpt_key,  
+    api_version=chat_model,
+    azure_endpoint = base_url,
+    organization = shortcode
+)
+
+
 # Define function to interact with ChatGPT
-def chatgpt(gpt_key, chat_model, prompt,TEMPERATURE):
-    openai.api_key = gpt_key
-    response = openai.chat.completions.create(
-        model=chat_model, messages=[{"role": "user", "content": prompt}], seed=1, temperature = TEMPERATURE
+def chatgpt(prompt,TEMPERATURE):   
+    response = client.chat.completions.create(
+    model=deploy_id, messages=[{"role": "user", "content": prompt}], seed=1, temperature = TEMPERATURE
     )
+    
     responses = response.choices[0].message.content.strip()
     gpt_list = [item.strip() for item in responses.split(",")]
     return gpt_list
@@ -82,8 +98,6 @@ def write_to_log_table(request_text, request_params):
 
 
 
-
-
 ######################################################
 ################# Look at dictionaries################
 ######################################################
@@ -99,10 +113,10 @@ def get_dictionary_terms(file_name, gpt_list, size):
                         This is the GPT list:{gpt_list}
                         This is the subject terms list: {file_list}
                         Order the list alphabetically from A-Z.
-                        Limit the results to {result_size} of the most relevant phrases sourced from the "Subject Terms List"
+                        As an expert in social science subject terms, limit the results to the {result_size} best of the most relevant phrases sourced from the "Subject Terms List"
                         Do not provide any additional commentary or feedback.
                         """
-    return chatgpt(gpt_key, chat_model, list_compare_prompt,TEMPERATURE)
+    return chatgpt(list_compare_prompt,TEMPERATURE)
 
 
 # Define function to find missing keywords
@@ -118,11 +132,11 @@ def missing_keywords(keyword_list, icpsr_keywords):
 def get_gpt_list(text_to_analyze):
 
     passage_prompt = f"""
-              Here is a passage of text: {text_to_analyze}.Analyze the passage to understand the main context and themes. Return them
+              Here is a passage of text: {text_to_analyze}.As an expert in social science subject terms, analyze the passage to understand the main context and themes. Return them
               in a comma delimited list. The themes and context descriptions should be no more than 3 words long and should not have special characters.
               Do not provide any additional commentary or feedback.
               """
-    gpt_words = chatgpt(gpt_key, chat_model, passage_prompt,TEMPERATURE)
+    gpt_words = chatgpt(passage_prompt,TEMPERATURE)
     return [word.lower() for word in gpt_words[:10]]
 
 
