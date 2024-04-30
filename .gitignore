@@ -2,3 +2,5 @@ data/
 getdata/VAR_CSV_OUTPUT.lst 
 .env
 presentation/
+gpt_sample_processed.csv
+script_batch.py
