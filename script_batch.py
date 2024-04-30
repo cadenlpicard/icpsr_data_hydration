@@ -12,7 +12,7 @@ import csv
 
 # Set GLOBAL 
 result_size = 10
-TEMPERATURE = .5
+TEMPERATURE = 0
 STUDYID = 0
 
 # Initialize results and missing variables
@@ -73,7 +73,7 @@ def chatgpt(prompt,TEMPERATURE):
 
 #Files
 input_file = './gpt_sample.csv'
-output_file = './gpt_sample_processed.csv'
+output_file = './gpt_sample_processed_0.csv'
 
 def get_gpt_list(text_to_analyze):
 
