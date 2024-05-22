@@ -52,7 +52,7 @@ gpt_key = secret_client.get_secret("gpt4-api-key").value
 shortcode = secret_client.get_secret("shortcode").value
 base_url = secret_client.get_secret("openai-api-base").value
 chat_model = "2023-05-15" 
-deploy_id = 'gpt-4-turbo' 
+deploy_id = 'gpt-4' 
 
 #Create OpenAI client
 client = AzureOpenAI(
