@@ -5,14 +5,14 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from dotenv import load_dotenv
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import io
 import csv
 
 
 # Set GLOBAL 
 result_size = 10
-TEMPERATURE = .5
+TEMPERATURE = 0
 STUDYID = 0
 
 # Initialize results and missing variables
@@ -73,7 +73,7 @@ def chatgpt(prompt,TEMPERATURE):
 
 #Files
 input_file = './gpt_sample.csv'
-output_file = './gpt_sample_processed.csv'
+output_file = './gpt_sample_processed_0.csv'
 
 def get_gpt_list(text_to_analyze):
 
@@ -84,6 +84,30 @@ def get_gpt_list(text_to_analyze):
               """
     gpt_words = chatgpt(passage_prompt,TEMPERATURE)
     return [word.lower() for word in gpt_words[:10]]
+
+def get_dictionary_terms(file_name, gpt_list, size):
+    file_keywords = return_keyword_list(file_name)[:20000]
+    file_list = ",".join(word.lower().strip() for word in file_keywords)
+
+    list_compare_prompt = f"""I am going to give you two lists. The first list is called "GPT list" and the second list is called "Subject Terms List".
+                        Based on the words in the "GPT list", find phrases in the "Subject Terms List" that describe similar contexts and themes. 
+                        The result set should be comma delimited list without numbering.
+                        This is the GPT list:{gpt_list}
+                        This is the subject terms list: {file_list}
+                        Order the list alphabetically from A-Z.
+                        As an expert in social science subject terms, limit the results to the {result_size} best of the most relevant phrases sourced from the "Subject Terms List"
+                        Do not provide any additional commentary or feedback.
+                        """
+    return chatgpt(list_compare_prompt,TEMPERATURE)
+
+
+# Define function to find missing keywords
+def missing_keywords(keyword_list, icpsr_keywords):
+    matches = []  
+    for item in keyword_list:
+        if item.strip() not in icpsr_keywords:
+            matches.append(item.strip())  
+    return ",".join(matches)  
 
 # Function to process CSV file and output results
 def process_csv(input_file, output_file):
@@ -100,17 +124,32 @@ def process_csv(input_file, output_file):
         
         # Generate GPT response
         gpt_response = get_gpt_list(text)
-        print(gpt_response)
+        icpsr_keywords = return_keyword_list("2")    
+        gpt_missing = missing_keywords(gpt_response, icpsr_keywords)
+        icpsr_result = get_dictionary_terms("2", gpt_response, result_size)
+        
+        #print(gpt_response)
         
         # Append the results to the output DataFrame
-        output_df = output_df.append({'study_id': study_id, 'text': text, 'gpt_response': gpt_response}, ignore_index=True)
+        output_df = output_df.append({'study_id': study_id, 'text': text, 'gpt_response': gpt_response,'icpr_keywords':icpsr_result, 'missing_icpsr': gpt_missing }, ignore_index=True)
         #print(output_df)
     
     # Write the output DataFrame to a CSV file
     output_df.to_csv(output_file, index=False)
+    
+# Define function to retrieve keyword list
+def return_keyword_list(db_id, header_name="keyword"):
+    sql_query = text(
+        "exec dbo.return_keywords :db_id"
+    )
+    with engine.connect() as connection:
+        result = connection.execute(sql_query, {"db_id": db_id})
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+    return [word.lower() for word in df[header_name].tolist()]
 
 # Main function to kickstart the process
 if __name__ == "__main__":
     input_csv = input_file  # Path to your input CSV file
     output_csv = output_file  # Path to your desired output CSV file
+    
     process_csv(input_csv, output_csv)
