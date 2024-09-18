@@ -1,7 +1,20 @@
 # ICPSR Data Hydration
 
 ### Overview
-This project is focused on automating the hydration of datasets from the Inter-university Consortium for Political and Social Research (ICPSR). It provides tools for fetching, processing, and organizing large datasets using Python. This includes batch processing and targeted data retrieval using APIs, with the ability to store hydrated data in a structured format.
+Efficiently curating metadata with controlled terminology is a critical yet time-consuming task in
+social science data management. Data depositors often provide insufficient metadata,
+compelling data repository staff to extensively enhance the metadata. This process traditionally
+involves navigating a wide array of controlled terms, a task demanding substantial time and
+expertise, sometimes necessitating the creation of new terms.
+
+Addressing these challenges, we introduce an innovative model employing Generative AI
+technology (ChatGPT). This tool is engineered to significantly diminish the time required for
+metadata curation for data repository staff while enhancing the accuracy of term matching. It
+achieves this by rapidly analyzing text and extracting pertinent keywords from established
+thesauri, including the ICPSR Subject Thesaurus, the European Language Social Science
+Thesaurus (ELSST), and Library of Congress Subject Headings (LC SH), along with ChatGPT's
+intelligent recommendations. This approach not only expedites the curation process but also
+ensures heightened precision and recall in the results.
 
 ### Features
 - **Batch Processing**: Efficiently handles multiple datasets in one go.
